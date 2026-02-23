@@ -82,7 +82,7 @@ class NanobotMemoryModule:
                 store=self.store,
                 llm=llm,
                 model=str(retrieval_cfg.get("model") or default_model),
-                max_context_words=int(retrieval_cfg.get("max_context_words") or 30),
+                max_context_words=int(retrieval_cfg.get("max_context_words") or 180),
             )
 
         consolidation_cfg = self._config.get("consolidation") or {}

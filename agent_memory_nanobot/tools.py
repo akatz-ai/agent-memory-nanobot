@@ -62,6 +62,10 @@ def _compact_memory_row(row: dict[str, Any], content_max: int = 280) -> dict[str
     }
     if "_distance" in row:
         out["distance"] = row.get("_distance")
+    if "_relevance_score" in row:
+        out["relevance_score"] = row.get("_relevance_score")
+    if "similarity_score" in row:
+        out["similarity_score"] = row.get("similarity_score")
     return out
 
 
