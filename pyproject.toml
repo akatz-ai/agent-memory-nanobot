@@ -1,0 +1,13 @@
+[project]
+name = "agent-memory-nanobot"
+version = "0.1.0"
+description = "Adapter to integrate agent-memory with nanobot"
+requires-python = ">=3.11"
+dependencies = [
+    "agent-memory",
+    "nanobot-ai",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
