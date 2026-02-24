@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from agent_memory_nanobot.hybrid import HybridMemoryManager
 from agent_memory_nanobot.providers import NanobotLLMAdapter
 from agent_memory_nanobot.tools import (
     MemoryForgetTool,
@@ -30,8 +32,14 @@ if TYPE_CHECKING:
 class NanobotMemoryModule:
     """Facade that wires nanobot runtime providers into agent-memory components."""
 
-    def __init__(self, provider: "NanobotProvider", config: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        provider: "NanobotProvider",
+        workspace: Path,
+        config: dict[str, Any] | None = None,
+    ):
         self._provider = provider
+        self._workspace = workspace
         self._config = config or {}
         self.initialized = False
 
@@ -39,6 +47,7 @@ class NanobotMemoryModule:
         self.retriever: "PreTurnRetriever" | None = None
         self.consolidator: "MemoryConsolidator" | None = None
         self.ingestion: "MemoryIngestionAgent" | None = None
+        self.hybrid: HybridMemoryManager | None = None
 
         self._tools: list["Tool"] = []
         self._build_components()
@@ -93,6 +102,13 @@ class NanobotMemoryModule:
                 model=str(consolidation_cfg.get("model") or default_model),
                 dedup_threshold=float(consolidation_cfg.get("dedup_threshold") or 0.3),
             )
+            if str(consolidation_cfg.get("engine") or "legacy").lower() == "hybrid":
+                self.hybrid = HybridMemoryManager(
+                    workspace=self._workspace,
+                    store=self.store,
+                    consolidator=self.consolidator,
+                    config=self._config,
+                )
 
         ingestion_cfg = self._config.get("ingestion") or {}
         ingestion_chunk_chars = ingestion_cfg.get("chunk_size_chars")
@@ -115,7 +131,7 @@ class NanobotMemoryModule:
 
         self._tools = [
             MemoryRecallTool(self.store),
-            MemorySaveTool(self.store),
+            MemorySaveTool(self.store, workspace=self._workspace),
             MemoryForgetTool(self.store),
             MemoryGraphTool(self.store),
             MemoryIngestTool(self.ingestion),
@@ -134,4 +150,4 @@ class NanobotMemoryModule:
         return list(self._tools)
 
 
-__all__ = ["NanobotMemoryModule", "NanobotLLMAdapter"]
+__all__ = ["HybridMemoryManager", "NanobotMemoryModule", "NanobotLLMAdapter"]

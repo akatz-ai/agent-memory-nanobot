@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -60,6 +61,10 @@ def _compact_memory_row(row: dict[str, Any], content_max: int = 280) -> dict[str
         "source": row.get("source"),
         "created_at_ms": row.get("created_at_ms"),
     }
+    if row.get("source_session"):
+        out["source_session"] = row.get("source_session")
+    if row.get("context_tag"):
+        out["context_tag"] = row.get("context_tag")
     if "_distance" in row:
         out["distance"] = row.get("_distance")
     if "_relevance_score" in row:
@@ -156,8 +161,9 @@ class MemoryRecallTool(Tool):
 class MemorySaveTool(Tool):
     """Save a memory node to the graph store."""
 
-    def __init__(self, store: "MemoryGraphStore"):
+    def __init__(self, store: "MemoryGraphStore", workspace: Path | None = None):
         self._store = store
+        self._memory_file = workspace / "memory" / "MEMORY.md" if workspace else None
 
     @property
     def name(self) -> str:
@@ -177,6 +183,7 @@ class MemorySaveTool(Tool):
                 "importance": {"type": "number", "minimum": 0, "maximum": 1, "description": "Importance score"},
                 "source": {"type": "string", "description": "Source label"},
                 "source_session": {"type": "string", "description": "Source session key"},
+                "context_tag": {"type": "string", "description": "Optional context label (2-5 words)"},
                 "peer_key": {"type": "string", "description": "Peer/session scope"},
                 "entities": {"type": "array", "items": {"type": "string"}, "description": "Named entities"},
                 "associations": {
@@ -204,18 +211,26 @@ class MemorySaveTool(Tool):
         importance: float = 0.5,
         source: str = "manual",
         source_session: str | None = None,
+        context_tag: str | None = None,
         peer_key: str | None = None,
         entities: list[str] | None = None,
         associations: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> str:
         try:
+            self._write_through_memory_file(
+                content=content,
+                memory_type=memory_type,
+                context_tag=context_tag,
+                source_session=source_session,
+            )
             memory_id = await self._store.save(
                 content=content,
                 memory_type=memory_type,
                 importance=importance,
                 source=source,
                 source_session=source_session,
+                context_tag=context_tag,
                 peer_key=peer_key,
                 entities=entities,
                 associations=associations,
@@ -223,6 +238,34 @@ class MemorySaveTool(Tool):
             return _json_ok({"memory_id": memory_id})
         except Exception as exc:
             return _json_error(str(exc))
+
+    def _write_through_memory_file(
+        self,
+        content: str,
+        memory_type: str,
+        context_tag: str | None,
+        source_session: str | None,
+    ) -> None:
+        if self._memory_file is None:
+            return
+
+        self._memory_file.parent.mkdir(parents=True, exist_ok=True)
+        if not self._memory_file.exists():
+            self._memory_file.write_text("", encoding="utf-8")
+
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        line = f"- [{stamp}] [{memory_type}] {content.strip()}"
+        if context_tag:
+            line += f" (context: {context_tag.strip()})"
+        if source_session:
+            line += f" (session: {source_session.strip()})"
+
+        existing = self._memory_file.read_text(encoding="utf-8")
+        if line in existing:
+            return
+
+        prefix = "" if (not existing or existing.endswith("\n")) else "\n"
+        self._memory_file.write_text(f"{existing}{prefix}{line}\n", encoding="utf-8")
 
 
 class MemoryForgetTool(Tool):
