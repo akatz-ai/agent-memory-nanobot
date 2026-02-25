@@ -101,6 +101,10 @@ class MemoryRecallTool(Tool):
                 },
                 "memory_type": {"type": "string", "description": "Optional memory type filter"},
                 "peer_key": {"type": "string", "description": "Optional peer/session scope"},
+                "allow_global_fallback": {
+                    "type": "boolean",
+                    "description": "If true, retry without peer_key when peer-scoped recall is empty.",
+                },
                 "max_results": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Max rows"},
                 "graph_depth": {"type": "integer", "minimum": 0, "maximum": 3, "description": "Graph expansion depth"},
             },
@@ -112,6 +116,7 @@ class MemoryRecallTool(Tool):
         mode: str = "hybrid",
         memory_type: str | None = None,
         peer_key: str | None = None,
+        allow_global_fallback: bool = False,
         max_results: int = 10,
         graph_depth: int = 1,
         **kwargs: Any,
@@ -130,8 +135,7 @@ class MemoryRecallTool(Tool):
             )
             used_peer_key = peer_key
             fallback_used = False
-            if not results and peer_key:
-                # Prevent hard empty results when caller passes a narrow/unknown peer scope.
+            if not results and peer_key and allow_global_fallback:
                 results = await self._store.recall(
                     query=query,
                     mode=mode,
@@ -151,6 +155,7 @@ class MemoryRecallTool(Tool):
                     "count": len(compact),
                     "peer_key": used_peer_key,
                     "fallback_used": fallback_used,
+                    "allow_global_fallback": bool(allow_global_fallback),
                     "results": compact,
                 }
             )

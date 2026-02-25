@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from agent_memory_nanobot.tools import MemorySaveTool
+from agent_memory_nanobot.tools import MemoryRecallTool, MemorySaveTool
 
 
 class _StoreWithAssertion:
@@ -39,3 +39,48 @@ async def test_memory_save_writes_to_memory_md_before_graph_index(tmp_path):
     assert payload["ok"] is True
     assert payload["memory_id"] == "mem-1"
     assert store.saved is True
+
+
+class _RecallStore:
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    async def recall(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs.get("peer_key") is not None:
+            return []
+        return [{"id": "global-1", "content": "global row", "memory_type": "fact"}]
+
+
+@pytest.mark.asyncio
+async def test_memory_recall_does_not_fallback_without_explicit_flag():
+    store = _RecallStore()
+    tool = MemoryRecallTool(store=store)
+
+    raw = await tool.execute(query="hello", mode="hybrid", peer_key="peer:alpha")
+    payload = json.loads(raw)
+
+    assert payload["ok"] is True
+    assert payload["count"] == 0
+    assert payload["fallback_used"] is False
+    assert len(store.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_memory_recall_can_fallback_when_explicitly_requested():
+    store = _RecallStore()
+    tool = MemoryRecallTool(store=store)
+
+    raw = await tool.execute(
+        query="hello",
+        mode="hybrid",
+        peer_key="peer:alpha",
+        allow_global_fallback=True,
+    )
+    payload = json.loads(raw)
+
+    assert payload["ok"] is True
+    assert payload["count"] == 1
+    assert payload["fallback_used"] is True
+    assert payload["peer_key"] is None
+    assert len(store.calls) == 2
