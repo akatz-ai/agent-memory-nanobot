@@ -35,6 +35,15 @@ class CompactionResult:
 
 class HybridMemoryManager:
     """Unified file-first memory with graph indexing."""
+    _CANONICAL_SECTIONS = (
+        "Identity & Preferences",
+        "Active Projects",
+        "Decisions",
+        "Reference Facts",
+        "Recent Context",
+    )
+    _DEFAULT_MEMORY_MD_MAX_TOKENS = 4000
+    _DEFAULT_MEMORY_MD_MAX_CHARS = 16000
 
     def __init__(
         self,
@@ -50,6 +59,15 @@ class HybridMemoryManager:
         self.store = store
         self.consolidator = consolidator
         self.config = config or {}
+        consolidation_cfg = self.config.get("consolidation") or {}
+        self._memory_md_max_tokens = max(
+            100,
+            int(consolidation_cfg.get("memory_md_max_tokens") or self._DEFAULT_MEMORY_MD_MAX_TOKENS),
+        )
+        self._memory_md_max_chars = max(
+            1000,
+            int(consolidation_cfg.get("memory_md_max_chars") or self._DEFAULT_MEMORY_MD_MAX_CHARS),
+        )
 
     async def compact(
         self,
@@ -227,7 +245,7 @@ class HybridMemoryManager:
         if not entries:
             return
 
-        existing = self.read_memory_md()
+        existing = self._coerce_to_canonical(self.read_memory_md())
         section = self._format_history_section(entries, session_key=session_key, timestamp=timestamp)
         model = str(
             (self.config.get("consolidation") or {}).get("model")
@@ -235,15 +253,20 @@ class HybridMemoryManager:
         )
 
         prompt = (
-            "Update MEMORY.md as a curated long-term facts document. Keep stable facts, "
-            "preferences, decisions, goals, and active projects. Remove chatter. Return markdown only."
+            "Update MEMORY.md as a curated long-term memory document.\n"
+            f"Use this exact canonical structure with markdown headings: {', '.join(self._CANONICAL_SECTIONS)}.\n"
+            "Rules:\n"
+            "- Keep stable facts, preferences, decisions, goals, and active projects.\n"
+            "- Remove chatter, transient details, and instructions.\n"
+            f"- Hard budget: <= {self._memory_md_max_tokens} tokens and <= {self._memory_md_max_chars} chars.\n"
+            "- Return markdown only."
         )
         user_message = (
             "## Existing MEMORY.md\n"
             f"{existing or '(empty)'}\n\n"
             "## New Daily History Entries\n"
             f"{section}\n\n"
-            "Return the full updated MEMORY.md."
+            "Return the full updated MEMORY.md using the canonical headings."
         )
 
         try:
@@ -254,7 +277,7 @@ class HybridMemoryManager:
                 ],
                 model=model or None,
                 temperature=0.0,
-                max_tokens=3000,
+                max_tokens=min(self._memory_md_max_tokens, 3500),
             )
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.warning("Hybrid MEMORY.md rewrite failed: %s", exc)
@@ -262,10 +285,180 @@ class HybridMemoryManager:
 
         normalized = self._strip_code_fence(updated)
         if not normalized.strip():
+            logger.warning("Hybrid MEMORY.md rewrite rejected: empty output")
+            return
+        if not self._is_valid_canonical_structure(normalized):
+            logger.warning("Hybrid MEMORY.md rewrite rejected: malformed canonical structure")
             return
 
+        bounded, overflow_sections = self._enforce_memory_budget(
+            self._coerce_to_canonical(normalized)
+        )
+        if not bounded.strip():
+            logger.warning("Hybrid MEMORY.md rewrite rejected: empty after budget enforcement")
+            return
+        if not self._fits_memory_budget(bounded):
+            logger.warning("Hybrid MEMORY.md rewrite rejected: exceeded memory budget")
+            return
+
+        self._archive_memory_overflow(
+            overflow_sections,
+            session_key=session_key,
+            timestamp=timestamp,
+        )
         self.memory_file.parent.mkdir(parents=True, exist_ok=True)
-        self.memory_file.write_text(normalized.strip() + "\n", encoding="utf-8")
+        self.memory_file.write_text(bounded.strip() + "\n", encoding="utf-8")
+
+    def _coerce_to_canonical(self, content: str) -> str:
+        text = self._strip_code_fence(content or "").strip()
+        if not text:
+            return self._empty_canonical_memory()
+
+        if not self._is_valid_canonical_structure(text):
+            # Preserve prior memory by moving legacy/unstructured content into facts.
+            facts = [line.strip() for line in text.splitlines() if line.strip()]
+            sections = {name: [] for name in self._CANONICAL_SECTIONS}
+            sections["Reference Facts"] = [f"- {line}" for line in facts]
+            return self._render_canonical(sections)
+
+        parsed = self._parse_canonical_sections(text)
+        return self._render_canonical(parsed)
+
+    def _empty_canonical_memory(self) -> str:
+        sections = {name: [] for name in self._CANONICAL_SECTIONS}
+        return self._render_canonical(sections)
+
+    def _parse_canonical_sections(self, content: str) -> dict[str, list[str]]:
+        sections = {name: [] for name in self._CANONICAL_SECTIONS}
+        current: str | None = None
+        for raw_line in content.strip().splitlines():
+            line = raw_line.rstrip()
+            if line.startswith("# "):
+                continue
+            if line.startswith("## "):
+                header = line[3:].strip()
+                current = header if header in sections else None
+                continue
+            if current is None:
+                continue
+            sections[current].append(line)
+        return sections
+
+    def _render_canonical(self, sections: dict[str, list[str]]) -> str:
+        lines = ["# MEMORY", ""]
+        for header in self._CANONICAL_SECTIONS:
+            body = sections.get(header, [])
+            if not body or not any(line.strip() for line in body):
+                body = ["- (none)"]
+            lines.append(f"## {header}")
+            lines.extend(body)
+            lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _is_valid_canonical_structure(self, content: str) -> bool:
+        stripped = content.strip()
+        if not stripped:
+            return False
+        lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+        if not lines or lines[0] != "# MEMORY":
+            return False
+        headers = [line[3:].strip() for line in lines if line.startswith("## ")]
+        if len(headers) != len(set(headers)):
+            return False
+        return all(section in headers for section in self._CANONICAL_SECTIONS)
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        return max(1, (len(text) + 3) // 4)
+
+    def _fits_memory_budget(self, content: str) -> bool:
+        return (
+            len(content) <= self._memory_md_max_chars
+            and self._estimate_tokens(content) <= self._memory_md_max_tokens
+        )
+
+    def _enforce_memory_budget(self, content: str) -> tuple[str, list[tuple[str, list[str]]]]:
+        if self._fits_memory_budget(content):
+            return content, []
+
+        sections = self._parse_canonical_sections(content)
+        overflow: list[tuple[str, list[str]]] = []
+        section_to_overflow: dict[str, list[str]] = {}
+
+        def _move_whole_section(header: str) -> None:
+            body = [line for line in sections.get(header, []) if line.strip()]
+            if not body:
+                return
+            overflow.append((header, body))
+            section_to_overflow.setdefault(header, []).extend(body)
+            sections[header] = ["- (archived due to size budget)"]
+
+        # Demote low-priority sections first.
+        for header in reversed(self._CANONICAL_SECTIONS):
+            candidate = self._render_canonical(sections)
+            if self._fits_memory_budget(candidate):
+                return candidate, overflow
+            _move_whole_section(header)
+
+        # If still too large, trim lines from each section tail.
+        for header in self._CANONICAL_SECTIONS:
+            body = sections.get(header, [])
+            while len(body) > 1 and not self._fits_memory_budget(self._render_canonical(sections)):
+                removed = body.pop()
+                if removed.strip():
+                    section_to_overflow.setdefault(header, []).insert(0, removed)
+                if not any(line.strip() for line in body):
+                    body[:] = ["- (archived due to size budget)"]
+            sections[header] = body
+
+        bounded = self._render_canonical(sections)
+        if section_to_overflow:
+            overflow = [(header, lines) for header, lines in section_to_overflow.items() if lines]
+        return bounded, overflow
+
+    def _archive_memory_overflow(
+        self,
+        overflow_sections: list[tuple[str, list[str]]],
+        *,
+        session_key: str,
+        timestamp: datetime,
+    ) -> None:
+        if not overflow_sections:
+            return
+
+        self.history_dir.mkdir(parents=True, exist_ok=True)
+        history_file = self.history_dir / f"{timestamp.date().isoformat()}.md"
+        heading = f"# {timestamp.date().isoformat()}\n\n"
+        if not history_file.exists():
+            history_file.write_text(heading, encoding="utf-8")
+
+        payload = json.dumps(overflow_sections, ensure_ascii=False, sort_keys=True)
+        marker_id = hashlib.sha256(
+            f"{session_key}|{timestamp.isoformat()}|{payload}".encode("utf-8")
+        ).hexdigest()[:16]
+        marker = f"<!-- memory_overflow_id: {marker_id} -->"
+
+        existing = history_file.read_text(encoding="utf-8")
+        if marker in existing:
+            return
+
+        lines = [
+            marker,
+            f"## {timestamp.strftime('%H:%M')} — MEMORY.md overflow archive ({session_key})",
+            "",
+            "Moved sections from MEMORY.md to enforce compaction budget:",
+            "",
+        ]
+        for header, body in overflow_sections:
+            if not body:
+                continue
+            lines.append(f"### {header}")
+            lines.extend(body)
+            lines.append("")
+
+        section = "\n".join(lines).rstrip()
+        separator = "" if existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
+        history_file.write_text(f"{existing}{separator}{section}\n", encoding="utf-8")
 
     @staticmethod
     def _strip_code_fence(text: str) -> str:
