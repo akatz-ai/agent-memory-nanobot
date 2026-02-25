@@ -22,6 +22,9 @@ class HistoryEntry:
     context: str
     entities: list[str]
     importance: float = 0.5
+    source_message_ids: list[str] | None = None
+    source_turn_ids: list[str] | None = None
+    extraction_run_id: str | None = None
 
 
 @dataclass
@@ -164,6 +167,9 @@ class HybridMemoryManager:
                 "context_tag": entry.context,
                 "importance": entry.importance,
                 "entities": entry.entities,
+                "source_message_ids": list(entry.source_message_ids or []),
+                "source_turn_ids": list(entry.source_turn_ids or []),
+                "extraction_run_id": entry.extraction_run_id,
             }
             for entry in entries
         ]
@@ -209,6 +215,9 @@ class HybridMemoryManager:
             context=context or "general",
             entities=entities,
             importance=importance,
+            source_message_ids=self._normalize_strings(extracted.get("source_message_ids")),
+            source_turn_ids=self._normalize_strings(extracted.get("source_turn_ids")),
+            extraction_run_id=self._coerce_optional_str(extracted.get("extraction_run_id")),
         )
 
     def _section_id(self, entries: list[HistoryEntry], session_key: str, timestamp: datetime) -> str:
@@ -489,3 +498,21 @@ class HybridMemoryManager:
         except (TypeError, ValueError):
             importance = 0.5
         return max(0.0, min(1.0, importance))
+
+    @staticmethod
+    def _normalize_strings(values: Any) -> list[str]:
+        if not isinstance(values, list):
+            return []
+        out: list[str] = []
+        for value in values:
+            text = str(value).strip()
+            if text:
+                out.append(text)
+        return out
+
+    @staticmethod
+    def _coerce_optional_str(value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None

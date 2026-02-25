@@ -65,6 +65,12 @@ def _compact_memory_row(row: dict[str, Any], content_max: int = 280) -> dict[str
         out["source_session"] = row.get("source_session")
     if row.get("context_tag"):
         out["context_tag"] = row.get("context_tag")
+    if row.get("source_message_ids"):
+        out["source_message_ids"] = row.get("source_message_ids")
+    if row.get("source_turn_ids"):
+        out["source_turn_ids"] = row.get("source_turn_ids")
+    if row.get("extraction_run_id"):
+        out["extraction_run_id"] = row.get("extraction_run_id")
     if "_distance" in row:
         out["distance"] = row.get("_distance")
     if "_relevance_score" in row:

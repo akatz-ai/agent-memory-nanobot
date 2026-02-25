@@ -49,7 +49,16 @@ class _RecallStore:
         self.calls.append(kwargs)
         if kwargs.get("peer_key") is not None:
             return []
-        return [{"id": "global-1", "content": "global row", "memory_type": "fact"}]
+        return [
+            {
+                "id": "global-1",
+                "content": "global row",
+                "memory_type": "fact",
+                "source_message_ids": ["msg-7"],
+                "source_turn_ids": ["turn-3"],
+                "extraction_run_id": "run-xyz",
+            }
+        ]
 
 
 @pytest.mark.asyncio
@@ -83,4 +92,7 @@ async def test_memory_recall_can_fallback_when_explicitly_requested():
     assert payload["count"] == 1
     assert payload["fallback_used"] is True
     assert payload["peer_key"] is None
+    assert payload["results"][0]["source_message_ids"] == ["msg-7"]
+    assert payload["results"][0]["source_turn_ids"] == ["turn-3"]
+    assert payload["results"][0]["extraction_run_id"] == "run-xyz"
     assert len(store.calls) == 2
