@@ -83,8 +83,9 @@ def _compact_memory_row(row: dict[str, Any], content_max: int = 280) -> dict[str
 class MemoryRecallTool(Tool):
     """Search memory using hybrid/vector/keyword/recent/important modes."""
 
-    def __init__(self, store: "MemoryGraphStore"):
+    def __init__(self, store: "MemoryGraphStore", agent_id: str | None = None):
         self._store = store
+        self._agent_id = agent_id
 
     @property
     def name(self) -> str:
@@ -107,6 +108,7 @@ class MemoryRecallTool(Tool):
                 },
                 "memory_type": {"type": "string", "description": "Optional memory type filter"},
                 "peer_key": {"type": "string", "description": "Optional peer/session scope"},
+                "agent_id": {"type": "string", "description": "Optional agent tenancy override"},
                 "allow_global_fallback": {
                     "type": "boolean",
                     "description": "If true, retry without peer_key when peer-scoped recall is empty.",
@@ -122,6 +124,7 @@ class MemoryRecallTool(Tool):
         mode: str = "hybrid",
         memory_type: str | None = None,
         peer_key: str | None = None,
+        agent_id: str | None = None,
         allow_global_fallback: bool = False,
         max_results: int = 10,
         graph_depth: int = 1,
@@ -131,11 +134,13 @@ class MemoryRecallTool(Tool):
             return _json_error("query is required for hybrid/vector/keyword modes")
 
         try:
+            effective_agent_id = agent_id or self._agent_id
             results = await self._store.recall(
                 query=query,
                 mode=mode,
                 memory_type=memory_type,
                 peer_key=peer_key,
+                agent_id=effective_agent_id,
                 max_results=max_results,
                 graph_depth=graph_depth,
             )
@@ -147,6 +152,7 @@ class MemoryRecallTool(Tool):
                     mode=mode,
                     memory_type=memory_type,
                     peer_key=None,
+                    agent_id=effective_agent_id,
                     max_results=max_results,
                     graph_depth=graph_depth,
                 )
@@ -172,9 +178,15 @@ class MemoryRecallTool(Tool):
 class MemorySaveTool(Tool):
     """Save a memory node to the graph store."""
 
-    def __init__(self, store: "MemoryGraphStore", workspace: Path | None = None):
+    def __init__(
+        self,
+        store: "MemoryGraphStore",
+        workspace: Path | None = None,
+        agent_id: str | None = None,
+    ):
         self._store = store
         self._memory_file = workspace / "memory" / "MEMORY.md" if workspace else None
+        self._agent_id = agent_id
 
     @property
     def name(self) -> str:
@@ -196,6 +208,12 @@ class MemorySaveTool(Tool):
                 "source_session": {"type": "string", "description": "Source session key"},
                 "context_tag": {"type": "string", "description": "Optional context label (2-5 words)"},
                 "peer_key": {"type": "string", "description": "Peer/session scope"},
+                "agent_id": {"type": "string", "description": "Optional agent tenancy override"},
+                "visibility": {
+                    "type": "string",
+                    "enum": ["private", "shared", "global"],
+                    "description": "Visibility scope for this memory",
+                },
                 "entities": {"type": "array", "items": {"type": "string"}, "description": "Named entities"},
                 "associations": {
                     "type": "array",
@@ -224,11 +242,14 @@ class MemorySaveTool(Tool):
         source_session: str | None = None,
         context_tag: str | None = None,
         peer_key: str | None = None,
+        agent_id: str | None = None,
+        visibility: str = "private",
         entities: list[str] | None = None,
         associations: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> str:
         try:
+            effective_agent_id = agent_id or self._agent_id
             self._write_through_memory_file(
                 content=content,
                 memory_type=memory_type,
@@ -243,6 +264,8 @@ class MemorySaveTool(Tool):
                 source_session=source_session,
                 context_tag=context_tag,
                 peer_key=peer_key,
+                agent_id=effective_agent_id,
+                visibility=visibility,
                 entities=entities,
                 associations=associations,
             )
@@ -315,8 +338,9 @@ class MemoryForgetTool(Tool):
 class MemoryGraphTool(Tool):
     """Traverse graph relationships from seed memory IDs."""
 
-    def __init__(self, store: "MemoryGraphStore"):
+    def __init__(self, store: "MemoryGraphStore", agent_id: str | None = None):
         self._store = store
+        self._agent_id = agent_id
 
     @property
     def name(self) -> str:
@@ -343,6 +367,7 @@ class MemoryGraphTool(Tool):
                     "description": "Optional relation type filter",
                 },
                 "max_nodes": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Node limit"},
+                "agent_id": {"type": "string", "description": "Optional agent tenancy override"},
             },
             "required": ["seed_ids"],
         }
@@ -353,12 +378,14 @@ class MemoryGraphTool(Tool):
         depth: int = 1,
         relation_types: list[str] | None = None,
         max_nodes: int = 50,
+        agent_id: str | None = None,
         **kwargs: Any,
     ) -> str:
         if not seed_ids:
             return _json_error("seed_ids must not be empty")
 
         try:
+            effective_agent_id = agent_id or self._agent_id
             nodes: dict[str, dict[str, Any]] = {}
             edges: dict[str, dict[str, Any]] = {}
 
@@ -368,6 +395,7 @@ class MemoryGraphTool(Tool):
                     depth=depth,
                     relation_types=relation_types,
                     max_nodes=max_nodes,
+                    agent_id=effective_agent_id,
                 )
                 for node in graph.get("nodes", []):
                     node_id = node.get("id")
@@ -395,8 +423,9 @@ class MemoryGraphTool(Tool):
 class MemoryIngestTool(Tool):
     """Ingest raw markdown/text into structured graph memories."""
 
-    def __init__(self, ingestion: "MemoryIngestionAgent" | None):
+    def __init__(self, ingestion: "MemoryIngestionAgent" | None, agent_id: str | None = None):
         self._ingestion = ingestion
+        self._agent_id = agent_id
 
     @property
     def name(self) -> str:
@@ -414,6 +443,12 @@ class MemoryIngestTool(Tool):
                 "text": {"type": "string", "description": "Raw markdown or plain text to ingest"},
                 "source": {"type": "string", "description": "Source label"},
                 "peer_key": {"type": "string", "description": "Optional peer/session scope"},
+                "agent_id": {"type": "string", "description": "Optional agent tenancy override"},
+                "visibility": {
+                    "type": "string",
+                    "enum": ["private", "shared", "global"],
+                    "description": "Visibility scope for ingested memories",
+                },
                 "file_name": {"type": "string", "description": "Virtual filename hint for ingestion"},
             },
             "required": ["text"],
@@ -424,6 +459,8 @@ class MemoryIngestTool(Tool):
         text: str,
         source: str = "tool_ingestion",
         peer_key: str | None = None,
+        agent_id: str | None = None,
+        visibility: str = "private",
         file_name: str = "ingested.md",
         **kwargs: Any,
     ) -> str:
@@ -437,10 +474,13 @@ class MemoryIngestTool(Tool):
                 tmp.write(text)
                 temp_path = Path(tmp.name)
 
+            effective_agent_id = agent_id or self._agent_id
             result = await self._ingestion.ingest_file(
                 file_path=temp_path,
                 source=source,
                 peer_key=peer_key,
+                agent_id=effective_agent_id,
+                visibility=visibility,
             )
             return _json_ok(result)
         except Exception as exc:

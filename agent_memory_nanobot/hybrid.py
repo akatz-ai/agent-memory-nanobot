@@ -78,6 +78,7 @@ class HybridMemoryManager:
         messages: list[dict[str, Any]],
         start_index: int,
         end_index: int,
+        agent_id: str | None = None,
     ) -> CompactionResult:
         """Single-pass extraction + file write + graph index."""
         self.memory_dir.mkdir(parents=True, exist_ok=True)
@@ -95,7 +96,11 @@ class HybridMemoryManager:
         entries = [self._to_history_entry(item) for item in extracted if item.get("content")]
 
         history_file = self._write_history_entries(entries, session_key=session_key, timestamp=compaction_time)
-        memories_indexed, edges_created = await self._index_entries(entries, session_key=session_key)
+        memories_indexed, edges_created = await self._index_entries(
+            entries,
+            session_key=session_key,
+            agent_id=agent_id,
+        )
         await self._rewrite_memory_md(entries, session_key=session_key, timestamp=compaction_time)
 
         return CompactionResult(
@@ -154,6 +159,7 @@ class HybridMemoryManager:
         self,
         entries: list[HistoryEntry],
         session_key: str,
+        agent_id: str | None = None,
     ) -> tuple[int, int]:
         """Index entries into graph. Returns (memories_indexed, edges_created)."""
         if not entries:
@@ -177,6 +183,7 @@ class HybridMemoryManager:
             extracted=extracted_payload,
             peer_key=session_key,
             source_session=session_key,
+            agent_id=agent_id,
             source="hybrid_history",
         )
         return int(stats.get("added", 0)) + int(stats.get("updated", 0)), int(

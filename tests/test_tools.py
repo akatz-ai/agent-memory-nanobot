@@ -156,3 +156,27 @@ def test_module_model_resolution_falls_back_to_provider_default(tmp_path):
     assert module.retriever.model == "provider-default"
     assert module.consolidator.model == "provider-default"
     assert module.ingestion.model == "provider-default"
+
+
+def test_module_agent_id_resolution_from_workspace_path(tmp_path):
+    workspace = tmp_path / "agents" / "support-bot"
+    workspace.mkdir(parents=True, exist_ok=True)
+    module = NanobotMemoryModule(
+        provider=_Provider(default_model="provider-default"),
+        workspace=workspace,
+        config={},
+    )
+
+    assert module._agent_id == "support-bot"
+
+
+def test_module_agent_id_resolution_prefers_config_override(tmp_path):
+    workspace = tmp_path / "agents" / "support-bot"
+    workspace.mkdir(parents=True, exist_ok=True)
+    module = NanobotMemoryModule(
+        provider=_Provider(default_model="provider-default"),
+        workspace=workspace,
+        config={"agent_id": "ops-bot"},
+    )
+
+    assert module._agent_id == "ops-bot"

@@ -30,6 +30,7 @@ class _FakeConsolidator:
     def __init__(self):
         self.llm = _FakeLLM()
         self.model = "claude-haiku-4-5"
+        self.last_index_kwargs = {}
         self._extracted = [
             {
                 "content": "Nanobot switched to hybrid memory pipeline.",
@@ -50,16 +51,32 @@ class _FakeConsolidator:
     async def extract_from_messages(self, messages, peer_key=None):
         return list(self._extracted)
 
-    async def index_extracted(self, extracted, peer_key=None, source_session=None, source="consolidation"):
+    async def index_extracted(
+        self,
+        extracted,
+        peer_key=None,
+        source_session=None,
+        agent_id=None,
+        visibility="private",
+        source="consolidation",
+    ):
+        self.last_index_kwargs = {
+            "peer_key": peer_key,
+            "source_session": source_session,
+            "agent_id": agent_id,
+            "visibility": visibility,
+            "source": source,
+        }
         return {"added": len(extracted), "updated": 0, "edges_created": 1}
 
 
 @pytest.mark.asyncio
 async def test_compact_writes_daily_history_and_indexes(tmp_path):
+    consolidator = _FakeConsolidator()
     manager = HybridMemoryManager(
         workspace=tmp_path,
         store=object(),  # store usage is delegated to consolidator
-        consolidator=_FakeConsolidator(),
+        consolidator=consolidator,
         config={"consolidation": {"model": "claude-haiku-4-5"}},
     )
     messages = [
@@ -72,12 +89,14 @@ async def test_compact_writes_daily_history_and_indexes(tmp_path):
         messages=messages,
         start_index=0,
         end_index=2,
+        agent_id="agent-x",
     )
 
     assert result.messages_processed == 2
     assert result.memories_indexed == 2
     assert result.edges_created == 1
     assert result.history_file.name == "2026-02-23.md"
+    assert consolidator.last_index_kwargs["agent_id"] == "agent-x"
 
     text = result.history_file.read_text(encoding="utf-8")
     assert "## 14:30 — Compaction (telegram:8554401569)" in text

@@ -41,6 +41,7 @@ class NanobotMemoryModule:
         self._provider = provider
         self._workspace = workspace
         self._config = config or {}
+        self._agent_id = self._resolve_agent_id()
         self.initialized = False
 
         self.store: "MemoryGraphStore"
@@ -134,13 +135,22 @@ class NanobotMemoryModule:
         )
 
         self._tools = [
-            MemoryRecallTool(self.store),
-            MemorySaveTool(self.store, workspace=self._workspace),
+            MemoryRecallTool(self.store, agent_id=self._agent_id),
+            MemorySaveTool(self.store, workspace=self._workspace, agent_id=self._agent_id),
             MemoryForgetTool(self.store),
-            MemoryGraphTool(self.store),
-            MemoryIngestTool(self.ingestion),
+            MemoryGraphTool(self.store, agent_id=self._agent_id),
+            MemoryIngestTool(self.ingestion, agent_id=self._agent_id),
             MemoryStatsTool(self.store),
         ]
+
+    def _resolve_agent_id(self) -> str:
+        configured = str(self._config.get("agent_id") or "").strip()
+        if configured:
+            return configured
+        parent = self._workspace.parent.name
+        if parent == "agents":
+            return self._workspace.name
+        return "default"
 
     async def initialize(self) -> None:
         """Initialize persistent storage tables."""
