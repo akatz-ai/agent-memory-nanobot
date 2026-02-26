@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from agent_memory_nanobot import NanobotMemoryModule
 from agent_memory_nanobot.tools import MemoryRecallTool, MemorySaveTool
 
 
@@ -96,3 +97,62 @@ async def test_memory_recall_can_fallback_when_explicitly_requested():
     assert payload["results"][0]["source_turn_ids"] == ["turn-3"]
     assert payload["results"][0]["extraction_run_id"] == "run-xyz"
     assert len(store.calls) == 2
+
+
+class _Provider:
+    def __init__(self, default_model: str):
+        self._default_model = default_model
+
+    def get_default_model(self) -> str:
+        return self._default_model
+
+    async def chat(self, **kwargs):
+        return None
+
+
+def test_module_model_resolution_prefers_llm_model(tmp_path):
+    module = NanobotMemoryModule(
+        provider=_Provider(default_model="provider-default"),
+        workspace=tmp_path,
+        config={
+            "llm_model": "graph-llm-model",
+            "background_model": "background-model",
+        },
+    )
+
+    assert module.retriever is not None
+    assert module.consolidator is not None
+    assert module.ingestion is not None
+    assert module.retriever.model == "graph-llm-model"
+    assert module.consolidator.model == "graph-llm-model"
+    assert module.ingestion.model == "graph-llm-model"
+
+
+def test_module_model_resolution_uses_background_model_before_provider_default(tmp_path):
+    module = NanobotMemoryModule(
+        provider=_Provider(default_model="provider-default"),
+        workspace=tmp_path,
+        config={"background_model": "background-model"},
+    )
+
+    assert module.retriever is not None
+    assert module.consolidator is not None
+    assert module.ingestion is not None
+    assert module.retriever.model == "background-model"
+    assert module.consolidator.model == "background-model"
+    assert module.ingestion.model == "background-model"
+
+
+def test_module_model_resolution_falls_back_to_provider_default(tmp_path):
+    module = NanobotMemoryModule(
+        provider=_Provider(default_model="provider-default"),
+        workspace=tmp_path,
+        config={},
+    )
+
+    assert module.retriever is not None
+    assert module.consolidator is not None
+    assert module.ingestion is not None
+    assert module.retriever.model == "provider-default"
+    assert module.consolidator.model == "provider-default"
+    assert module.ingestion.model == "provider-default"

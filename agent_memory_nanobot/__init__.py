@@ -81,6 +81,7 @@ class NanobotMemoryModule:
         default_model = str(
             self._config.get("llm_model")
             or self._config.get("model")
+            or self._config.get("background_model")
             or self._provider.get_default_model()
         )
         llm = NanobotLLMAdapter(provider=self._provider, default_model=default_model)
