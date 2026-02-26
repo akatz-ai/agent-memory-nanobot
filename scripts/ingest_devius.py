@@ -53,7 +53,6 @@ def _require_env(name: str) -> str:
 
 async def main() -> int:
     _require_env("OPENAI_API_KEY")
-    os.environ.setdefault("GROQ_API_KEY", "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")
 
     provider = LiteLLMProvider(
         api_key=os.environ["OPENAI_API_KEY"],
