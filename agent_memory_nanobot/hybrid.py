@@ -81,6 +81,7 @@ class HybridMemoryManager:
         start_index: int,
         end_index: int,
         agent_id: str | None = None,
+        skip_memory_rewrite: bool = False,
     ) -> CompactionResult:
         """Single-pass extraction + file write + graph index."""
         self.memory_dir.mkdir(parents=True, exist_ok=True)
@@ -133,7 +134,8 @@ class HybridMemoryManager:
             session_key=session_key,
             agent_id=agent_id,
         )
-        await self._rewrite_memory_md(entries, session_key=session_key, timestamp=compaction_time)
+        if not skip_memory_rewrite:
+            await self._rewrite_memory_md(entries, session_key=session_key, timestamp=compaction_time)
 
         return CompactionResult(
             success=True,
@@ -142,6 +144,20 @@ class HybridMemoryManager:
             messages_processed=len(message_window),
             memories_indexed=memories_indexed,
             edges_created=edges_created,
+        )
+
+    async def rewrite_memory_md(
+        self,
+        entries: list[HistoryEntry],
+        *,
+        session_key: str,
+        timestamp: datetime | None = None,
+    ) -> None:
+        """Public run-level MEMORY.md rewrite entrypoint."""
+        await self._rewrite_memory_md(
+            entries,
+            session_key=session_key,
+            timestamp=timestamp or datetime.now(),
         )
 
     def _write_history_entries(
