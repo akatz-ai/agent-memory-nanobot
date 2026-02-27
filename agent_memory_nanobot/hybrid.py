@@ -29,11 +29,13 @@ class HistoryEntry:
 
 @dataclass
 class CompactionResult:
+    success: bool
     entries: list[HistoryEntry]
-    history_file: Path
+    history_file: Path | None
     messages_processed: int
     memories_indexed: int
     edges_created: int
+    error: str | None = None
 
 
 class HybridMemoryManager:
@@ -89,10 +91,40 @@ class HybridMemoryManager:
         message_window = messages[start:end]
         compaction_time = self._resolve_compaction_time(message_window)
 
-        extracted = await self.consolidator.extract_from_messages(
+        extraction = await self.consolidator.extract_from_messages(
             messages=message_window,
             peer_key=session_key,
         )
+        if isinstance(extraction, dict) and "ok" in extraction:
+            if not bool(extraction.get("ok")):
+                return CompactionResult(
+                    success=False,
+                    entries=[],
+                    history_file=None,
+                    messages_processed=len(message_window),
+                    memories_indexed=0,
+                    edges_created=0,
+                    error=str(extraction.get("error") or "extraction parse failure"),
+                )
+            extracted_items = extraction.get("items")
+            extracted = extracted_items if isinstance(extracted_items, list) else []
+        elif isinstance(extraction, list):
+            extracted = extraction
+        else:
+            extracted = []
+
+        user_turns = sum(1 for msg in message_window if str(msg.get("role") or "").lower() == "user")
+        if user_turns >= 5 and not extracted:
+            return CompactionResult(
+                success=False,
+                entries=[],
+                history_file=None,
+                messages_processed=len(message_window),
+                memories_indexed=0,
+                edges_created=0,
+                error="suspicious empty extraction for non-trivial chunk",
+            )
+
         entries = [self._to_history_entry(item) for item in extracted if item.get("content")]
 
         history_file = self._write_history_entries(entries, session_key=session_key, timestamp=compaction_time)
@@ -104,6 +136,7 @@ class HybridMemoryManager:
         await self._rewrite_memory_md(entries, session_key=session_key, timestamp=compaction_time)
 
         return CompactionResult(
+            success=True,
             entries=entries,
             history_file=history_file,
             messages_processed=len(message_window),
