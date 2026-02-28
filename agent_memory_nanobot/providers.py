@@ -75,4 +75,18 @@ class NanobotLLMAdapter:
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        return response.content or ""
+        content = response.content or ""
+
+        # Detect error responses that the provider wraps as content text.
+        # Without this check, error messages like "Anthropic API error: 529 - [overloaded]"
+        # get passed to JSON parsers and cause confusing parse failures.
+        finish_reason = getattr(response, "finish_reason", None)
+        if finish_reason == "error":
+            logger.warning(
+                "LLM adapter: provider returned error response (model={}): {}",
+                resolved_model,
+                content[:300],
+            )
+            return ""
+
+        return content

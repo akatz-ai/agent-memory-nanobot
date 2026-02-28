@@ -36,6 +36,10 @@ class CompactionResult:
     memories_indexed: int
     edges_created: int
     error: str | None = None
+    # Debug telemetry for compaction dashboard
+    transcript_chars: int = 0
+    llm_response_chars: int = 0
+    llm_response_preview: str = ""
 
 
 class HybridMemoryManager:
@@ -96,6 +100,12 @@ class HybridMemoryManager:
             messages=message_window,
             peer_key=session_key,
         )
+        # Capture debug telemetry from extraction
+        _raw_response = ""
+        _transcript_chars = 0
+        if isinstance(extraction, dict):
+            _raw_response = str(extraction.get("_raw_response", ""))
+            _transcript_chars = int(extraction.get("_transcript_chars", 0))
         if isinstance(extraction, dict) and "ok" in extraction:
             if not bool(extraction.get("ok")):
                 return CompactionResult(
@@ -106,6 +116,9 @@ class HybridMemoryManager:
                     memories_indexed=0,
                     edges_created=0,
                     error=str(extraction.get("error") or "extraction parse failure"),
+                    transcript_chars=_transcript_chars,
+                    llm_response_chars=len(_raw_response),
+                    llm_response_preview=_raw_response[:500],
                 )
             extracted_items = extraction.get("items")
             extracted = extracted_items if isinstance(extracted_items, list) else []
@@ -144,6 +157,9 @@ class HybridMemoryManager:
             messages_processed=len(message_window),
             memories_indexed=memories_indexed,
             edges_created=edges_created,
+            transcript_chars=_transcript_chars,
+            llm_response_chars=len(_raw_response),
+            llm_response_preview=_raw_response[:500],
         )
 
     async def rewrite_memory_md(
