@@ -106,6 +106,7 @@ class NanobotMemoryModule:
                 llm=llm,
                 model=str(consolidation_cfg.get("model") or default_model),
                 dedup_threshold=float(consolidation_cfg.get("dedup_threshold") or 0.3),
+                extraction_max_tokens=int(consolidation_cfg.get("extraction_max_tokens") or 4096),
             )
             if str(consolidation_cfg.get("engine") or "legacy").lower() == "hybrid":
                 self.hybrid = HybridMemoryManager(
